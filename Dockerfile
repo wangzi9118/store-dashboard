@@ -23,9 +23,10 @@ WORKDIR /app
 COPY --chown=node:node server.mjs ./
 COPY --from=build --chown=node:node /app/dist ./dist
 
-RUN mkdir -p /app/data && chown node:node /app/data
+RUN mkdir -p /app/data
 
-USER node
+# WeChat Cloud Hosting is configured to expose port 80.
+USER root
 
 EXPOSE 80
 
