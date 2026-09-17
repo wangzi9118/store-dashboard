@@ -7,7 +7,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-echo 正在启动门店财务运营看板 v2.0 ...
+echo 正在启动门店财务运营看板 v3.0 ...
 start "" http://localhost:5174
 node server.mjs
 pause
