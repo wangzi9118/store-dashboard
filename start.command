@@ -5,6 +5,6 @@ if ! command -v node >/dev/null 2>&1; then
   read -r -p "按回车退出"
   exit 1
 fi
-echo "正在启动门店财务运营看板 v1.1 ..."
+echo "正在启动门店财务运营看板 v2.0 ..."
 (sleep 1.5; open "http://localhost:5174") &
 node server.mjs

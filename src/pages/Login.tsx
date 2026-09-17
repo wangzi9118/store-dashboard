@@ -59,7 +59,7 @@ export function Login() {
 
       {/* 四角技术标签（AURA） */}
       <div className="tech pointer-events-none absolute left-6 top-6 z-10 hidden sm:block lg:left-12 lg:top-10">SYS.CORE // ON-LINE</div>
-      <div className="tech pointer-events-none absolute right-6 top-6 z-10 hidden sm:block lg:right-12 lg:top-10">V01.1 · 门店财务运营看板</div>
+      <div className="tech pointer-events-none absolute right-6 top-6 z-10 hidden sm:block lg:right-12 lg:top-10">V02.0 · 门店财务运营看板</div>
       <div className="tech pointer-events-none absolute bottom-6 left-6 z-10 hidden sm:block lg:bottom-10 lg:left-12">UPLINK_ESTABLISHED_</div>
 
       <div className="relative z-10 mx-auto grid min-h-screen w-full max-w-[1440px] items-center px-4 py-16 lg:grid-cols-2 lg:gap-12 lg:px-12">

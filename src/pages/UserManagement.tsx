@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Button, IconButton } from '../components/ui/Button'
 import { useConfirm } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -77,6 +77,11 @@ export function UserManagement() {
   const [newPassword2, setNewPassword2] = useState('')
   const [pwdError, setPwdError] = useState('')
   const [savingPwd, setSavingPwd] = useState(false)
+
+  // 数据库导出 / 导入
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   const loadUsers = async () => {
     setLoading(true)
@@ -187,6 +192,64 @@ export function UserManagement() {
     }
   }
 
+  async function exportDatabase() {
+    setExporting(true)
+    try {
+      const response = await fetch(`${apiBase}/database/export`, { credentials: 'include' })
+      if (!response.ok) { toast.error(await readError(response, '导出失败')); return }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      const now = new Date()
+      const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+      link.download = `store-dashboard-${stamp}.sqlite`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      toast.success('数据库已导出，请妥善保存。')
+    } catch {
+      toast.error('无法连接服务器，导出失败。')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  function pickImportFile() {
+    fileInputRef.current?.click()
+  }
+
+  async function importDatabase(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const ok = await confirm({
+      title: '导入数据库？',
+      description: `将用「${file.name}」整体替换当前数据库，覆盖全部门店、账号和权限数据。导入前系统会自动备份当前数据库。此操作不能撤销。`,
+      confirmLabel: '确认导入',
+      cancelLabel: '取消',
+      danger: true,
+    })
+    if (!ok) return
+    setImporting(true)
+    try {
+      const response = await fetch(`${apiBase}/database/import`, {
+        method: 'POST',
+        credentials: 'include',
+        body: file,
+      })
+      if (!response.ok) { toast.error(await readError(response, '导入失败')); return }
+      const payload = (await response.json()) as { backup?: string }
+      toast.success(`数据库已导入${payload.backup ? `，原数据库已备份为 ${payload.backup}` : ''}。正在重新加载…`)
+      setTimeout(() => window.location.reload(), 1200)
+    } catch {
+      toast.error('无法连接服务器，导入失败。')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   function storesLabel(user: ManagedUser) {
     if (user.role === 'admin') return <Pill tone="neutral" icon="shield">全部门店</Pill>
     const ids = user.allowedStoreIds || []
@@ -240,6 +303,26 @@ export function UserManagement() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="surface overflow-hidden">
+        <SectionHeader title="数据库" description="导出或导入整个 SQLite 数据库文件（store-dashboard.sqlite）" />
+        <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-ink-3">
+            导出会生成当前数据库的完整快照；导入会用上传的文件整体替换当前数据。导入前自动备份原数据库。
+          </p>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button variant="secondary" icon="download" loading={exporting} onClick={() => void exportDatabase()}>导出数据库</Button>
+            <Button variant="secondary" icon="upload" loading={importing} onClick={pickImportFile}>导入数据库</Button>
+          </div>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".sqlite,application/vnd.sqlite3,application/x-sqlite3"
+          className="sr-only"
+          onChange={(event) => void importDatabase(event)}
+        />
       </section>
 
       <Modal

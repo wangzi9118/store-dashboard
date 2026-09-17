@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
-import { stat, mkdir } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
+import { stat, mkdir, rename, unlink } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto'
@@ -13,9 +13,7 @@ const staticDir = path.join(rootDir, 'dist')
 const port = Number(process.env.PORT || 5174)
 const host = process.env.HOST || '0.0.0.0'
 
-await mkdir(dataDir, { recursive: true })
-const database = new DatabaseSync(databasePath)
-database.exec(`
+const SCHEMA = `
   CREATE TABLE IF NOT EXISTS app_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL,
@@ -39,26 +37,43 @@ database.exec(`
     user_id TEXT NOT NULL,
     expires_at TEXT NOT NULL
   );
-`)
+`
 
-const userColumns = database.prepare('PRAGMA table_info(users)').all()
-if (!userColumns.some((column) => column.name === 'last_login_at')) {
-  database.exec('ALTER TABLE users ADD COLUMN last_login_at TEXT')
+let database
+let userByUsername, userById, listUsers, insertUser, updatePassword, updateLastLogin, deleteUser
+let getPermissions, deletePermissions, insertPermission
+let sessionByHash, insertSession, deleteSession
+let getState, putState
+
+async function openDatabase() {
+  await mkdir(dataDir, { recursive: true })
+  database = new DatabaseSync(databasePath)
+  database.exec(SCHEMA)
+
+  const userColumns = database.prepare('PRAGMA table_info(users)').all()
+  if (!userColumns.some((column) => column.name === 'last_login_at')) {
+    database.exec('ALTER TABLE users ADD COLUMN last_login_at TEXT')
+  }
+
+  userByUsername = database.prepare('SELECT * FROM users WHERE username = ?')
+  userById = database.prepare('SELECT * FROM users WHERE id = ?')
+  listUsers = database.prepare('SELECT id, username, role, created_at AS createdAt, last_login_at AS lastLoginAt FROM users ORDER BY created_at')
+  insertUser = database.prepare('INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)')
+  updatePassword = database.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+  updateLastLogin = database.prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
+  deleteUser = database.prepare("DELETE FROM users WHERE id = ? AND role = 'observer'")
+  getPermissions = database.prepare('SELECT store_id AS storeId FROM observer_store_permissions WHERE user_id = ?')
+  deletePermissions = database.prepare('DELETE FROM observer_store_permissions WHERE user_id = ?')
+  insertPermission = database.prepare('INSERT OR IGNORE INTO observer_store_permissions (user_id, store_id) VALUES (?, ?)')
+  sessionByHash = database.prepare('SELECT user_id AS userId, expires_at AS expiresAt FROM sessions WHERE token_hash = ?')
+  insertSession = database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+  deleteSession = database.prepare('DELETE FROM sessions WHERE token_hash = ?')
+  getState = database.prepare('SELECT data, updated_at AS updatedAt FROM app_state WHERE id = 1')
+  putState = database.prepare(`
+    INSERT INTO app_state (id, data, updated_at) VALUES (1, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+  `)
 }
-
-const userByUsername = database.prepare('SELECT * FROM users WHERE username = ?')
-const userById = database.prepare('SELECT * FROM users WHERE id = ?')
-const listUsers = database.prepare('SELECT id, username, role, created_at AS createdAt, last_login_at AS lastLoginAt FROM users ORDER BY created_at')
-const insertUser = database.prepare('INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)')
-const updatePassword = database.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-const updateLastLogin = database.prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
-const deleteUser = database.prepare("DELETE FROM users WHERE id = ? AND role = 'observer'")
-const getPermissions = database.prepare('SELECT store_id AS storeId FROM observer_store_permissions WHERE user_id = ?')
-const deletePermissions = database.prepare('DELETE FROM observer_store_permissions WHERE user_id = ?')
-const insertPermission = database.prepare('INSERT OR IGNORE INTO observer_store_permissions (user_id, store_id) VALUES (?, ?)')
-const sessionByHash = database.prepare('SELECT user_id AS userId, expires_at AS expiresAt FROM sessions WHERE token_hash = ?')
-const insertSession = database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
-const deleteSession = database.prepare('DELETE FROM sessions WHERE token_hash = ?')
 
 function hashPassword(password, salt = randomBytes(16).toString('hex')) {
   return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`
@@ -77,17 +92,13 @@ function publicUser(user) {
   const permissions = user.role === 'observer' ? getPermissions.all(user.id).map((row) => row.storeId) : undefined
   return { id: user.id, username: user.username, role: user.role, allowedStoreIds: permissions }
 }
-function ensureAdmin() {
+async function ensureAdmin() {
   const existing = userByUsername.get('wyb')
   if (!existing) insertUser.run(createId('user'), 'wyb', hashPassword('123456'), 'admin', new Date().toISOString())
 }
-ensureAdmin()
 
-const getState = database.prepare('SELECT data, updated_at AS updatedAt FROM app_state WHERE id = 1')
-const putState = database.prepare(`
-  INSERT INTO app_state (id, data, updated_at) VALUES (1, ?, ?)
-  ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-`)
+await openDatabase()
+await ensureAdmin()
 
 function sendJson(response, status, body) {
   response.writeHead(status, {
@@ -274,6 +285,87 @@ const server = createServer(async (request, response) => {
     }
     return
   }
+  if (url.pathname === '/api/database/export' && request.method === 'GET') {
+    if (!requireUser(request, response, 'admin')) return
+    const backupPath = path.join(dataDir, `store-dashboard-export-${Date.now()}.sqlite`)
+    try {
+      database.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`)
+      const fileStat = await stat(backupPath)
+      response.writeHead(200, {
+        'Content-Type': 'application/vnd.sqlite3',
+        'Content-Disposition': 'attachment; filename="store-dashboard.sqlite"',
+        'Content-Length': fileStat.size,
+        'Cache-Control': 'no-store',
+      })
+      const stream = createReadStream(backupPath)
+      stream.on('error', () => { try { response.end() } catch { /* 客户端已断开 */ } })
+      stream.on('end', () => { void unlink(backupPath).catch(() => {}) })
+      stream.pipe(response)
+    } catch (error) {
+      void unlink(backupPath).catch(() => {})
+      sendJson(response, 500, { message: error instanceof Error ? error.message : '导出数据库失败' })
+    }
+    return
+  }
+
+  if (url.pathname === '/api/database/import' && request.method === 'POST') {
+    if (!requireUser(request, response, 'admin')) return
+    const tmpPath = path.join(dataDir, `store-dashboard-import-${Date.now()}.sqlite`)
+    let out
+    try {
+      out = createWriteStream(tmpPath)
+      const sizeLimit = 200 * 1024 * 1024
+      let total = 0
+      let tooBig = false
+      for await (const chunk of request) {
+        total += chunk.length
+        if (total > sizeLimit) { tooBig = true; break }
+        if (!out.write(chunk)) { await new Promise((resolve) => out.once('drain', resolve)) }
+      }
+      if (tooBig) { sendJson(response, 413, { message: '数据库文件超过 200 MB' }); return }
+      out.end()
+      await new Promise((resolve, reject) => { out.on('finish', resolve); out.on('error', reject) })
+
+      // 校验文件确实是本系统的 SQLite 数据库
+      let probe = null
+      try {
+        probe = new DatabaseSync(tmpPath)
+        const tables = probe.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name)
+        for (const table of ['app_state', 'users', 'observer_store_permissions', 'sessions']) {
+          if (!tables.includes(table)) { sendJson(response, 400, { message: `缺少数据表 ${table}，不是本系统的数据库文件` }); return }
+        }
+        const admin = probe.prepare("SELECT count(*) AS c FROM users WHERE role = 'admin'").get()
+        if (!admin || admin.c < 1) { sendJson(response, 400, { message: '导入的数据库没有管理员账号，导入后无法登录' }); return }
+      } catch (error) {
+        if (response.headersSent) throw error
+        if (probe) { try { probe.close() } catch { /* 已关闭 */ } }
+        void unlink(tmpPath).catch(() => {})
+        sendJson(response, 400, { message: '不是有效的 SQLite 数据库文件' })
+        return
+      }
+      probe.close()
+
+      // 先安全导出当前库作为备份，再替换
+      const backupPath = path.join(dataDir, `store-dashboard-backup-${Date.now()}.sqlite`)
+      try { database.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`) } catch { /* 备份失败仍允许导入 */ }
+      database.close()
+      try {
+        await rename(tmpPath, databasePath)
+      } catch (error) {
+        await openDatabase()
+        void unlink(backupPath).catch(() => {})
+        sendJson(response, 500, { message: error instanceof Error ? error.message : '替换数据库文件失败' })
+        return
+      }
+      await openDatabase()
+      sendJson(response, 200, { ok: true, backup: path.basename(backupPath) })
+    } catch (error) {
+      void unlink(tmpPath).catch(() => {})
+      if (!response.headersSent) sendJson(response, 500, { message: error instanceof Error ? error.message : '导入数据库失败' })
+    }
+    return
+  }
+
   if (url.pathname.startsWith('/api/')) {
     sendJson(response, 404, { message: '接口不存在' })
     return
