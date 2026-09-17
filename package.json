@@ -9,12 +9,14 @@
     "start": "node server.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "migrate:sqlite": "node scripts/migrate-sqlite-to-mysql.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
     "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
+    "mysql2": "^3.14.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.3"

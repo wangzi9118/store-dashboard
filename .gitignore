@@ -8,6 +8,9 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.env
+.env.*
+!.env.example
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal

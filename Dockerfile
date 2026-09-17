@@ -20,10 +20,10 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
+COPY --chown=node:node package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY --chown=node:node server.mjs ./
 COPY --from=build --chown=node:node /app/dist ./dist
-
-RUN mkdir -p /app/data
 
 # WeChat Cloud Hosting is configured to expose port 80.
 USER root

@@ -57,11 +57,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const normalized = normalizeAppData(remoteData)
         if (user.role === 'admin') saveData(normalized)
         setData(normalized)
-      } else if (user.role === 'admin') {
-        // 服务器尚未初始化：用本地数据初始化一次
-        const localData = loadData()
-        await saveRemoteData(localData)
-        setData(localData)
       } else {
         setData(EMPTY)
       }

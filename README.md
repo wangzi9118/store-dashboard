@@ -19,26 +19,31 @@
 
 ## 快速开始
 
-### 方式一：直接运行发布包（推荐，无需 npm install）
+### 方式一：运行服务
 
-发布包已带构建好的前端（`dist/`），后端只用 Node 内置模块，开箱即用。
+发布包已带构建好的前端（`dist/`）。服务端需要安装依赖并连接 MySQL。
 
 1. **安装 Node.js 22.5+**（推荐 24）：https://nodejs.org
-2. **启动**：
+2. **安装依赖并配置 MySQL**：
+   ```bash
+   npm ci --omit=dev
+   # 配置 MYSQL_HOST、MYSQL_USER、MYSQL_PASSWORD、MYSQL_DATABASE
+   ```
+3. **启动**：
    - Windows：双击 `start.bat`
    - macOS：双击 `start.command`（首次可能需在「系统设置 → 隐私与安全性」允许运行）
    - 或终端执行：`node server.mjs`
-3. **打开浏览器**：访问 http://localhost:5174
+4. **打开浏览器**：访问 http://localhost:5174
 
 看到 `Store dashboard server listening on http://0.0.0.0:5174` 即启动成功。
 
-> 升级时请解压到全新空目录，保留旧目录的 `data/` 拷贝过来，不要覆盖旧版目录。
+> 升级时只替换代码并重新构建，不需要复制容器本地目录；MySQL 数据库保持不变。
 
 ### 方式二：从源码开发
 
 ```bash
 npm install        # 安装依赖
-npm run server     # 终端 1：后端 + SQLite（默认 5174）
+npm run server     # 后端 + MySQL（默认 5174）
 npm run dev        # 终端 2：前端开发服务（默认 5173，/api 代理到 5174）
 ```
 
@@ -115,7 +120,7 @@ npm run dev        # 终端 2：前端开发服务（默认 5173，/api 代理�
 
 ```bash
 npm run dev       # 前端开发服务
-npm run server    # 后端和 SQLite 服务
+npm run server    # 后端和 MySQL 服务
 npm run build     # TypeScript 检查 + 构建到 dist/
 npm run lint      # oxlint 静态检查
 npm start         # 生产模式启动，提供页面和 API
@@ -143,7 +148,7 @@ HOST=127.0.0.1 PORT=5174 npm start
 - 用 PM2 或 systemd 保持服务运行
 - 用 Nginx/Caddy 配置域名、HTTPS 反向代理（公网必须 HTTPS）
 - 让 Node 服务只监听 `127.0.0.1`，由反向代理对外
-- 定期备份 `data/` 目录
+- 为 MySQL 配置定期备份
 - 升级时不要覆盖现有数据库，程序会自动迁移表结构
 
 详见 [`DEPLOY.md`](./DEPLOY.md)。
@@ -152,17 +157,17 @@ HOST=127.0.0.1 PORT=5174 npm start
 
 ```bash
 docker build -t store-dashboard .
-docker run -d -p 80:80 -v $(pwd)/data:/app/data store-dashboard
+docker run -d -p 80:80 --env-file .env store-dashboard
 ```
 
 - 容器内默认 `HOST=0.0.0.0 PORT=80`
-- `/app/data` 是 SQLite 数据目录，请挂载卷以持久化
+- 通过云托管环境变量配置 MySQL，不需要挂载容器本地数据目录
 
 ---
 
 ## 数据存储
 
-数据库文件：`data/store-dashboard.sqlite`
+生产环境使用 MySQL。启动时会自动创建以下数据表：
 
 | 表 | 用途 |
 | --- | --- |
@@ -171,7 +176,17 @@ docker run -d -p 80:80 -v $(pwd)/data:/app/data store-dashboard
 | `observer_store_permissions` | 观察者与可查看门店的对应关系 |
 | `sessions` | 登录会话令牌哈希和过期时间 |
 
-> 业务数据采用单条 JSON 保存，适合轻量服务器和小团队。不支持高并发协同录入（最后写入结果覆盖之前的）。
+> 业务数据采用单条 JSON 保存，适合轻量服务器和小团队。不支持高并发协同录入（最后写入结果覆盖之前的）。MySQL 负责持久化，浏览器缓存不会自动覆盖服务器数据。
+
+### 从旧版 SQLite 迁移
+
+先配置 MySQL 环境变量，再执行：
+
+```bash
+node scripts/migrate-sqlite-to-mysql.mjs data/store-dashboard.sqlite
+```
+
+迁移脚本会导入账号、密码哈希、观察者门店权限和业务数据；会话不会迁移，导入后需要重新登录。
 
 ---
 
@@ -180,8 +195,8 @@ docker run -d -p 80:80 -v $(pwd)/data:/app/data store-dashboard
 - **前端**：React 19 + TypeScript + Vite 8 + Tailwind CSS 4 + React Router 7
 - **图表**：ECharts 6 + echarts-for-react
 - **Excel**：@e965/xlsx
-- **后端**：Node.js 原生 HTTP 服务（`node:http`）+ 内置 `node:sqlite`
-- **无需额外数据库软件**
+- **后端**：Node.js 原生 HTTP 服务（`node:http`）+ MySQL（`mysql2`）
+- **生产环境需要 MySQL 8.0+（云托管 MySQL 或其他托管 MySQL）**
 
 ---
 
@@ -189,8 +204,7 @@ docker run -d -p 80:80 -v $(pwd)/data:/app/data store-dashboard
 
 ```
 store-dashboard/
-├─ server.mjs                 # 后端：HTTP 服务、SQLite、认证、API
-├─ data/                      # SQLite 数据库（运行时自动创建）
+├─ server.mjs                 # 后端：HTTP 服务、MySQL、认证、API
 ├─ dist/                      # 已构建的前端（发布包附带）
 ├─ src/
 │  ├─ main.tsx                # 应用入口
@@ -236,8 +250,6 @@ store-dashboard/
 | `GET /api/users/:id/permissions` | 获取观察者门店权限 | 管理员 |
 | `PUT /api/users/:id/permissions` | 更新观察者门店权限 | 管理员 |
 | `PUT /api/users/:id/password` | 修改密码 | 管理员 |
-| `GET /api/database/export` | 导出数据库备份 | 管理员 |
-| `POST /api/database/import` | 导入数据库 | 管理员 |
 
 ---
 
