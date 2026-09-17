@@ -178,16 +178,6 @@ docker run -d -p 80:80 --env-file .env store-dashboard
 
 > 业务数据采用单条 JSON 保存，适合轻量服务器和小团队。不支持高并发协同录入（最后写入结果覆盖之前的）。MySQL 负责持久化，浏览器缓存不会自动覆盖服务器数据。
 
-### 从旧版 SQLite 迁移
-
-先配置 MySQL 环境变量，再执行：
-
-```bash
-node scripts/migrate-sqlite-to-mysql.mjs data/store-dashboard.sqlite
-```
-
-迁移脚本会导入账号、密码哈希、观察者门店权限和业务数据；会话不会迁移，导入后需要重新登录。
-
 ---
 
 ## 技术栈

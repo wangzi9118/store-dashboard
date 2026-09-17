@@ -9,7 +9,6 @@
     "start": "node server.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "migrate:sqlite": "node scripts/migrate-sqlite-to-mysql.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
