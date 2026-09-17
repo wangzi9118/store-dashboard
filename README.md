@@ -290,3 +290,5 @@ npm run build && npm run lint && node --check server.mjs
 当前版本：**v3.0**（见 `VERSION.txt`）
 
 登录页右上角显示 `V03.0`，页面底部显示 `门店财务运营看板 · V3.0`。
+
+ver.by:wyb&tonyfu
