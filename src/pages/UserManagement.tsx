@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Button, IconButton } from '../components/ui/Button'
 import { useConfirm } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -10,8 +10,9 @@ import { Pill } from '../components/ui/Pill'
 import { useToast } from '../components/ui/Toast'
 import { useData } from '../context/DataContext'
 import { useCurrentUser } from '../lib/auth'
+import { getTemplateMeta, uploadTemplate, downloadTemplate, type TemplateMeta } from '../lib/templateApi'
 
-interface ManagedUser { id: string; username: string; role: 'admin' | 'observer'; allowedStoreIds?: string[]; lastLoginAt?: string | null }
+interface ManagedUser { id: string; username: string; role: 'admin' | 'observer'; allowedStoreIds?: string[]; canEditData?: boolean; canManageStores?: boolean; lastLoginAt?: string | null }
 
 const apiBase = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
@@ -63,12 +64,16 @@ export function UserManagement() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [createStores, setCreateStores] = useState<string[]>([])
+  const [createCanEditData, setCreateCanEditData] = useState(false)
+  const [createCanManageStores, setCreateCanManageStores] = useState(false)
   const [createError, setCreateError] = useState('')
   const [creating, setCreating] = useState(false)
 
   // 编辑门店权限
   const [permUser, setPermUser] = useState<ManagedUser | null>(null)
   const [permStores, setPermStores] = useState<string[]>([])
+  const [permCanEditData, setPermCanEditData] = useState(false)
+  const [permCanManageStores, setPermCanManageStores] = useState(false)
   const [savingPerm, setSavingPerm] = useState(false)
 
   // 修改密码
@@ -77,6 +82,20 @@ export function UserManagement() {
   const [newPassword2, setNewPassword2] = useState('')
   const [pwdError, setPwdError] = useState('')
   const [savingPwd, setSavingPwd] = useState(false)
+
+  const [templateMeta, setTemplateMeta] = useState<TemplateMeta | null>(null)
+  const [templateUploading, setTemplateUploading] = useState(false)
+  const [templateDownloading, setTemplateDownloading] = useState(false)
+  const templateFileInputRef = useRef<HTMLInputElement>(null)
+
+  const loadTemplate = async () => {
+    try {
+      const meta = await getTemplateMeta()
+      setTemplateMeta(meta)
+    } catch {
+      // 忽略或静默失败
+    }
+  }
 
   const loadUsers = async () => {
     setLoading(true)
@@ -90,10 +109,53 @@ export function UserManagement() {
       setLoading(false)
     }
   }
-  useEffect(() => { void loadUsers() }, [])
+
+  useEffect(() => {
+    void loadUsers()
+    void loadTemplate()
+  }, [])
+
+  async function onTemplateSelected(file: File | undefined) {
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      toast.error('仅支持上传 .xlsx 格式的 Excel 模板文件')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('模板文件大小不能超过 5MB')
+      return
+    }
+    setTemplateUploading(true)
+    try {
+      const res = await uploadTemplate(file)
+      toast.success(res.message || '模板上传成功')
+      setTemplateMeta({
+        exists: true,
+        filename: res.filename,
+        size: res.size,
+        updatedAt: res.updatedAt,
+      })
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '上传模板失败')
+    } finally {
+      setTemplateUploading(false)
+    }
+  }
+
+  async function handleDownloadTemplate() {
+    setTemplateDownloading(true)
+    try {
+      await downloadTemplate()
+      toast.success('模板下载开始')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '下载模板失败')
+    } finally {
+      setTemplateDownloading(false)
+    }
+  }
 
   function openCreate() {
-    setUsername(''); setPassword(''); setCreateStores(storeIds); setCreateError(''); setCreateOpen(true)
+    setUsername(''); setPassword(''); setCreateStores([]); setCreateCanEditData(false); setCreateCanManageStores(false); setCreateError(''); setCreateOpen(true)
   }
 
   async function createUser(event: FormEvent) {
@@ -105,7 +167,7 @@ export function UserManagement() {
     try {
       const response = await fetch(`${apiBase}/users`, {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password, allowedStoreIds: createStores }),
+        body: JSON.stringify({ username: username.trim(), password, allowedStoreIds: createStores, canEditData: createCanEditData, canManageStores: createCanManageStores }),
       })
       if (!response.ok) { setCreateError(await readError(response, '创建失败')); return }
       setCreateOpen(false)
@@ -121,6 +183,8 @@ export function UserManagement() {
   function openPermissions(user: ManagedUser) {
     setPermUser(user)
     setPermStores(user.allowedStoreIds || [])
+    setPermCanEditData(Boolean(user.canEditData))
+    setPermCanManageStores(Boolean(user.canManageStores))
   }
 
   async function savePermissions() {
@@ -129,11 +193,11 @@ export function UserManagement() {
     try {
       const response = await fetch(`${apiBase}/users/${permUser.id}/permissions`, {
         method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowedStoreIds: permStores }),
+        body: JSON.stringify({ allowedStoreIds: permStores, canEditData: permCanEditData, canManageStores: permCanManageStores }),
       })
       if (!response.ok) { toast.error(await readError(response, '保存权限失败')); return }
-      setUsers((items) => items.map((item) => (item.id === permUser.id ? { ...item, allowedStoreIds: permStores } : item)))
-      toast.success(`「${permUser.username}」现在可以查看 ${permStores.length} 家门店`)
+      setUsers((items) => items.map((item) => (item.id === permUser.id ? { ...item, allowedStoreIds: permStores, canEditData: permCanEditData, canManageStores: permCanManageStores } : item)))
+      toast.success(`「${permUser.username}」的门店和功能权限已保存`)
       setPermUser(null)
     } catch {
       toast.error('无法连接服务器，权限未保存。')
@@ -204,7 +268,7 @@ export function UserManagement() {
     <div className="space-y-4">
       <PageHeader
         title="权限管理"
-        description="观察者只能查看被分配门店的看板和门店 PK，不能录入或修改数据。"
+        description="管理员可为观察者分配可见门店，以及月度录入、门店管理权限。"
         actions={<Button variant="primary" icon="plus" onClick={openCreate}>新建观察者</Button>}
       />
 
@@ -228,8 +292,10 @@ export function UserManagement() {
                 <div className="text-xs text-ink-3 tnum">
                   <span className="sm:hidden">上次登录 </span>{formatLastLogin(user.lastLoginAt)}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {storesLabel(user)}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {storesLabel(user)}
+                    {user.role === 'observer' && user.canEditData && <Pill tone="accent">可录入</Pill>}
+                    {user.role === 'observer' && user.canManageStores && <Pill tone="accent">可管理门店</Pill>}
                   {user.role === 'observer' && <Button variant="link" size="sm" className="text-xs" onClick={() => openPermissions(user)}>调整门店</Button>}
                 </div>
                 <div className="flex items-center gap-1 sm:justify-end">
@@ -242,10 +308,74 @@ export function UserManagement() {
         )}
       </section>
 
+      {/* 模板管理卡片 */}
+      <section className="surface overflow-hidden">
+        <SectionHeader
+          title="Excel 导入模板"
+          description="管理员可上传 .xlsx 格式的月度导入模板（最大 5MB），供有录入权限的用户在“月度录入”下载。"
+          actions={
+            <div className="flex items-center gap-2">
+              <input
+                ref={templateFileInputRef}
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="hidden"
+                disabled={templateUploading}
+                onChange={(event) => {
+                  void onTemplateSelected(event.target.files?.[0])
+                  event.currentTarget.value = ''
+                }}
+              />
+              {templateMeta?.exists && (
+                <Button
+                  variant="secondary"
+                  icon="download"
+                  loading={templateDownloading}
+                  onClick={() => void handleDownloadTemplate()}
+                >
+                  下载模板
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                icon="upload"
+                loading={templateUploading}
+                onClick={() => templateFileInputRef.current?.click()}
+              >
+                {templateUploading ? '正在上传…' : templateMeta?.exists ? '更新模板' : '上传模板'}
+              </Button>
+            </div>
+          }
+        />
+        <div className="p-4 sm:p-5">
+          {templateMeta?.exists ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-inner)] border border-line bg-surface-2 p-3 sm:p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--r-sm)] bg-income-soft text-income-text">
+                  <Icon name="invoice" size={20} />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-ink break-all">{templateMeta.filename}</div>
+                  <div className="mt-0.5 text-xs text-ink-3">
+                    大小：{templateMeta.size ? `${(templateMeta.size / 1024).toFixed(1)} KB` : '未知'}
+                    {templateMeta.updatedAt && ` · 更新于：${new Date(templateMeta.updatedAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`}
+                  </div>
+                </div>
+              </div>
+              <Pill tone="good">已就绪</Pill>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3 text-sm text-ink-3">
+              <span>当前尚未上传导入模板。点击右上角“上传模板”上传 .xlsx 格式文件。</span>
+            </div>
+          )}
+        </div>
+      </section>
+
       <Modal
         open={createOpen}
         title="新建观察者"
-        description="观察者账号只能查看分配到的门店。"
+        description="观察者默认只能查看分配的门店；可额外开通月度录入或门店管理。"
         onClose={() => setCreateOpen(false)}
         footer={
           <>
@@ -265,6 +395,10 @@ export function UserManagement() {
             <div className="mb-1.5 text-xs font-medium text-ink-2">可查看的门店</div>
             <StoreCheckboxes storeIds={storeIds} storeNames={storeNames} selected={createStores} onChange={setCreateStores} />
           </div>
+          <div className="space-y-2 border-t border-line pt-3">
+            <label className="flex cursor-pointer items-center gap-3 text-sm text-ink-2"><input type="checkbox" className="h-4 w-4" checked={createCanEditData} onChange={(e) => setCreateCanEditData(e.target.checked)} />允许月度录入和修改自己负责门店的数据</label>
+            <label className="flex cursor-pointer items-center gap-3 text-sm text-ink-2"><input type="checkbox" className="h-4 w-4" checked={createCanManageStores} onChange={(e) => setCreateCanManageStores(e.target.checked)} />允许新增、重命名和删除自己添加的门店</label>
+          </div>
           {createError && <p role="alert" className="text-sm text-bad">{createError}</p>}
         </form>
       </Modal>
@@ -283,6 +417,10 @@ export function UserManagement() {
         }
       >
         <StoreCheckboxes storeIds={storeIds} storeNames={storeNames} selected={permStores} onChange={setPermStores} />
+        <div className="mt-4 space-y-2 border-t border-line pt-3">
+          <label className="flex cursor-pointer items-center gap-3 text-sm text-ink-2"><input type="checkbox" className="h-4 w-4" checked={permCanEditData} onChange={(e) => setPermCanEditData(e.target.checked)} />允许月度录入和修改自己负责门店的数据</label>
+          <label className="flex cursor-pointer items-center gap-3 text-sm text-ink-2"><input type="checkbox" className="h-4 w-4" checked={permCanManageStores} onChange={(e) => setPermCanManageStores(e.target.checked)} />允许新增、重命名和删除自己添加的门店</label>
+        </div>
       </Modal>
 
       <Modal

@@ -15,6 +15,8 @@ import { formatMoney, formatMoneyExact, formatPct, grossMargin } from '../lib/fo
 import { clampDay, emptyChannel, emptyLine, shouldHighlight, sumAmounts, sumChannelAmounts, syncRecordTotals } from '../lib/moneyLines'
 import { newId } from '../lib/storage'
 import { useIsMobile } from '../lib/theme'
+import { useCurrentUser } from '../lib/auth'
+import { downloadTemplate, getTemplateMeta, type TemplateMeta } from '../lib/templateApi'
 import { YEARS } from '../types'
 import type { ChannelAmount, MoneyLine, MonthlyRecord, Store } from '../types'
 
@@ -184,11 +186,18 @@ function MoneyTable({ month, items, tone, onChange }: MoneyTableProps) {
 
 export function DataEntry() {
   const { data, saveRecord, saveStore, removeRecord } = useData()
+  const user = useCurrentUser()
   const confirm = useConfirm()
   const toast = useToast()
   const mobile = useIsMobile()
 
-  const [scope, setScope] = useState<Scope>({ storeId: data.stores[0]?.id || '', year: now.getFullYear(), month: now.getMonth() + 1 })
+  const writableStores = useMemo(
+    () => user.role === 'admin' ? data.stores : data.stores.filter((store) => store.ownerUserId === user.id),
+    [data.stores, user.id, user.role],
+  )
+  const writableStoreIds = useMemo(() => new Set(writableStores.map((store) => store.id)), [writableStores])
+
+  const [scope, setScope] = useState<Scope>({ storeId: writableStores[0]?.id || '', year: now.getFullYear(), month: now.getMonth() + 1 })
   const [orderExpense, setOrderExpense] = useState(0)
   const [payroll, setPayroll] = useState(0)
   const [withdraw, setWithdraw] = useState(0)
@@ -208,6 +217,27 @@ export function DataEntry() {
   const [excelImporting, setExcelImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const formTopRef = useRef<HTMLDivElement>(null)
+
+  const [templateMeta, setTemplateMeta] = useState<TemplateMeta | null>(null)
+  const [templateDownloading, setTemplateDownloading] = useState(false)
+
+  useEffect(() => {
+    getTemplateMeta()
+      .then((meta) => setTemplateMeta(meta))
+      .catch(() => {})
+  }, [])
+
+  async function handleDownloadTemplate() {
+    setTemplateDownloading(true)
+    try {
+      await downloadTemplate()
+      toast.success('模板下载开始')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '下载模板失败')
+    } finally {
+      setTemplateDownloading(false)
+    }
+  }
 
   const currentRecord = useMemo(
     () => data.records.find((record) => record.storeId === scope.storeId && record.year === scope.year && record.month === scope.month),
@@ -230,13 +260,14 @@ export function DataEntry() {
   const loadedScopeKey = useRef('')
   useEffect(() => {
     const key = `${scope.storeId}|${scope.year}|${scope.month}`
-    if (!scope.storeId && data.stores[0]) { setScope((s) => ({ ...s, storeId: data.stores[0].id })); return }
+    if (!scope.storeId && writableStores[0]) { setScope((s) => ({ ...s, storeId: writableStores[0].id })); return }
+    if (scope.storeId && !writableStoreIds.has(scope.storeId)) { setScope((s) => ({ ...s, storeId: writableStores[0]?.id || '' })); return }
     if (loadedScopeKey.current === key) return
     loadedScopeKey.current = key
     applyRecord(currentRecord)
     // 记录被其他操作（导入、删除）改动时不打断正在进行的编辑
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, data.stores])
+  }, [scope, writableStores, writableStoreIds])
 
   useEffect(() => {
     if (!dirty) return
@@ -263,9 +294,9 @@ export function DataEntry() {
 
   const rows = useMemo(
     () => data.records
-      .filter((record) => record.year === filterYear && (filterStore === 'all' || record.storeId === filterStore))
+      .filter((record) => writableStoreIds.has(record.storeId) && record.year === filterYear && (filterStore === 'all' || record.storeId === filterStore))
       .sort((a, b) => b.month - a.month || a.storeId.localeCompare(b.storeId)),
-    [data.records, filterYear, filterStore],
+    [data.records, filterYear, filterStore, writableStoreIds],
   )
 
   const sales = sumChannelAmounts(incomeChannels)
@@ -358,33 +389,47 @@ export function DataEntry() {
   const previewRows = useMemo(() => {
     if (!excelImport) return []
     return excelImport.rows.map((row) => {
-      const storeId = data.stores.find((store) => store.name.trim() === row.storeName.trim())?.id
+      const requestedName = row.storeName.trim()
+      const observerPrefix = `${user.username}-`
+      const prefixedName = user.role === 'observer'
+        ? `${observerPrefix}${requestedName.toLocaleLowerCase().startsWith(observerPrefix.toLocaleLowerCase()) ? requestedName.slice(observerPrefix.length) : requestedName}`
+        : requestedName
+      const storeId = writableStores.find((store) => store.name.trim() === requestedName || store.name.trim() === prefixedName)?.id
       const existing = storeId ? data.records.find((record) => record.storeId === storeId && record.year === row.year && record.month === row.month) : undefined
       return { row, status: !storeId ? 'newStore' as const : existing ? 'overwrite' as const : 'new' as const }
     })
-  }, [excelImport, data.stores, data.records])
+  }, [excelImport, writableStores, data.records, user.role, user.username])
   const overwriteCount = previewRows.filter((item) => item.status === 'overwrite').length
   const newCount = previewRows.length - overwriteCount
   const newStoreNames = [...new Set(previewRows.filter((item) => item.status === 'newStore').map((item) => item.row.storeName.trim()))]
 
   async function importExcelRows() {
     if (!excelImport) return
+    if (user.role === 'observer' && !user.canManageStores && newStoreNames.length > 0) {
+      toast.error('当前账号没有门店管理权限，无法自动创建 Excel 中的新门店。')
+      return
+    }
     if (dirty) {
       const ok = await confirm({ title: '导入前先放弃当前未保存的修改？', description: '导入会更新对应月份的记录，当前编辑区未保存的改动会丢失。', confirmLabel: '放弃并导入', cancelLabel: '先不导入', danger: true })
       if (!ok) return
     }
-    const storeIds = new Map(data.stores.map((store) => [store.name.trim(), store.id]))
+    const storeIds = new Map(writableStores.map((store) => [store.name.trim(), store.id]))
     let createdStores = 0
     const importedScopes = new Set(excelImport.rows.map((row) => `${row.storeName.trim()}|${row.year}`))
     for (const record of data.records) {
-      const name = data.stores.find((store) => store.id === record.storeId)?.name.trim()
+      const name = writableStores.find((store) => store.id === record.storeId)?.name.trim()
       if (name && importedScopes.has(`${name}|${record.year}`) && isEmptyRecord(record)) removeRecord(record.id)
     }
     for (const row of excelImport.rows) {
-      let storeId = storeIds.get(row.storeName.trim())
+      const requestedName = row.storeName.trim()
+      const observerPrefix = `${user.username}-`
+      const finalName = user.role === 'observer'
+        ? `${observerPrefix}${requestedName.toLocaleLowerCase().startsWith(observerPrefix.toLocaleLowerCase()) ? requestedName.slice(observerPrefix.length) : requestedName}`
+        : requestedName
+      let storeId = storeIds.get(requestedName) || storeIds.get(finalName)
       if (!storeId) {
-        const store: Store = { id: newId('store'), name: row.storeName.trim(), createdAt: new Date().toISOString() }
-        saveStore(store); storeIds.set(store.name, store.id); storeId = store.id; createdStores += 1
+        const store: Store = { id: newId('store'), name: finalName, createdAt: new Date().toISOString(), ownerUserId: user.role === 'observer' ? user.id : undefined }
+        saveStore(store); storeIds.set(store.name, store.id); storeIds.set(requestedName, store.id); storeId = store.id; createdStores += 1
       }
       const existing = data.records.find((record) => record.storeId === storeId && record.year === row.year && record.month === row.month)
       saveRecord(syncRecordTotals({
@@ -423,6 +468,17 @@ export function DataEntry() {
         description="营业额实收和总支出由收支渠道自动汇总；占比和毛利率实时计算。收支明细只作记录。"
         actions={
           <>
+            {templateMeta?.exists && (
+              <Button
+                variant="secondary"
+                icon="download"
+                loading={templateDownloading}
+                onClick={() => void handleDownloadTemplate()}
+                title="下载管理员上传的月度收支录入模板"
+              >
+                下载模板
+              </Button>
+            )}
             <input
               ref={fileInputRef}
               type="file"
@@ -498,7 +554,7 @@ export function DataEntry() {
             <Field label="门店" htmlFor="scope-store" className="col-span-2 md:col-span-1">
               <select id="scope-store" value={scope.storeId} onChange={(event) => void changeScope({ storeId: event.target.value })} className="control font-medium" required>
                 <option value="" disabled>选择门店</option>
-                {data.stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+                {writableStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
               </select>
             </Field>
             <Field label="年份" htmlFor="scope-year">
@@ -630,7 +686,7 @@ export function DataEntry() {
               </select>
               <select aria-label="筛选门店" value={filterStore} onChange={(event) => setFilterStore(event.target.value)} className="control control-sm w-[120px] sm:w-36">
                 <option value="all">全部门店</option>
-                {data.stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+                {writableStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
               </select>
             </div>
           }

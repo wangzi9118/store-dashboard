@@ -4,12 +4,14 @@ import { grossMargin } from './formulas'
 export interface YearTotals {
   sales: number
   totalExpense: number
+  balance: number
   orderExpense: number
   orderRatio: number
   payroll: number
   payrollRatio: number
   withdraw: number
   grossMargin: number
+  netMargin: number
 }
 
 export interface MonthSeries {
@@ -50,9 +52,11 @@ export function sumTotals(records: MonthlyRecord[]): YearTotals {
   )
   return {
     ...t,
+    balance: t.sales - t.totalExpense,
     orderRatio: t.sales > 0 ? t.orderExpense / t.sales : 0,
     payrollRatio: t.sales > 0 ? t.payroll / t.sales : 0,
-    grossMargin: grossMargin(t.sales, t.totalExpense),
+    grossMargin: grossMargin(t.sales, t.orderExpense),
+    netMargin: t.sales > 0 ? (t.sales - t.totalExpense) / t.sales : 0,
   }
 }
 

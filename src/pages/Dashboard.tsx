@@ -99,7 +99,7 @@ export function Dashboard() {
         </div>
       ) : (
         <>
-          <KpiCards totals={totals} comparison={comparison} inProgress={selectedInProgress} spark={{ values: series.map((item) => (item.count > 0 ? item.sales : null)), activeIndex: month === 'all' ? undefined : month - 1 }} />
+          <KpiCards totals={totals} comparison={comparison} inProgress={selectedInProgress} spark={{ values: series.map((item) => (item.count > 0 ? item.sales : null)), activeIndex: month === 'all' ? undefined : month - 1 }} expenseSpark={{ values: series.map((item) => (item.count > 0 ? item.expense : null)), activeIndex: month === 'all' ? undefined : month - 1 }} />
           {month === 'all' && (
             <LineChart year={year} series={series} previousSeries={previousSeries} previousYear={year - 1} inProgressMonth={inProgressMonth} />
           )}

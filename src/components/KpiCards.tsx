@@ -22,6 +22,7 @@ interface Props {
   /** 当前筛选的月份尚未结束 */
   inProgress?: boolean
   spark?: Spark
+  expenseSpark?: Spark
 }
 
 interface Metric {
@@ -36,12 +37,14 @@ interface Metric {
 const M: Record<string, Metric> = {
   sales: { key: 'sales', label: '营业额实收', positiveIsGood: true, hint: '所有收入渠道金额之和' },
   totalExpense: { key: 'totalExpense', label: '总支出', positiveIsGood: false, hint: '所有支出渠道金额之和' },
-  grossMargin: { key: 'grossMargin', label: '毛利率', percent: true, positiveIsGood: true, hint: '(营业额实收 − 总支出) / 营业额实收' },
+  balance: { key: 'balance', label: '本月结余', positiveIsGood: true, hint: '营业额实收 − 总支出' },
+  grossMargin: { key: 'grossMargin', label: '毛利率', percent: true, positiveIsGood: true, hint: '(营业额实收 − 订货支出) / 营业额实收' },
   withdraw: { key: 'withdraw', label: '总提现', positiveIsGood: true, hint: '月度录入的提现金额，不计入营业额' },
   orderExpense: { key: 'orderExpense', label: '订货支出', positiveIsGood: false, hint: '来自 Excel“订货总支出”列或手工录入' },
   orderRatio: { key: 'orderRatio', label: '订货占比', percent: true, positiveIsGood: false, hint: '订货支出 / 营业额实收' },
   payroll: { key: 'payroll', label: '工资支出', positiveIsGood: false, hint: '来自 Excel“工资”列或手工录入' },
   payrollRatio: { key: 'payrollRatio', label: '工资占比', percent: true, positiveIsGood: false, hint: '工资支出 / 营业额实收' },
+  netMargin: { key: 'netMargin', label: '净利率', percent: true, positiveIsGood: true, hint: '本月结余 / 营业额实收' },
 }
 
 /** 值与单位拆开：值大字，单位小字 */
@@ -94,10 +97,12 @@ function Delta({ metric, current, previous, comparison, compact = false }: { met
   )
 }
 
-/** 12 个月的迷你柱：收入色，年度视图全部同色，月份视图只亮所选月 */
-function SparkBars({ spark }: { spark: Spark }) {
+/** 12 个月的迷你柱：年度视图全部同色，月份视图只亮所选月 */
+function SparkBars({ spark, tone = 'income' }: { spark: Spark; tone?: 'income' | 'expense' }) {
   const max = Math.max(...spark.values.map((v) => v ?? 0), 1)
   const active = spark.activeIndex
+  const onCls = tone === 'income' ? 'bg-income/80' : 'bg-expense/80'
+  const offCls = tone === 'income' ? 'bg-income/25' : 'bg-expense/25'
   return (
     <div className="mt-auto flex h-11 w-full max-w-[360px] items-end gap-2 pt-5 sm:h-12 sm:gap-2.5" aria-hidden="true">
       {spark.values.map((value, index) => {
@@ -106,7 +111,7 @@ function SparkBars({ spark }: { spark: Spark }) {
         return (
           <div key={index} className="flex h-full flex-1 items-end">
             <div
-              className={`spark-bar w-full rounded-[2px] ${value === null ? 'bg-surface-3' : on ? 'bg-income/80' : 'bg-income/25'}`}
+              className={`spark-bar w-full rounded-[2px] ${value === null ? 'bg-surface-3' : on ? onCls : offCls}`}
               style={{ height: value === null ? 3 : `${height}%`, animationDelay: `${index * 40}ms` }}
             />
           </div>
@@ -116,9 +121,9 @@ function SparkBars({ spark }: { spark: Spark }) {
   )
 }
 
-function Card({ metric, totals, comparison, sub, inProgress, hero, spark, className = '' }: {
+function Card({ metric, totals, comparison, sub, inProgress, hero, spark, sparkTone, className = '' }: {
   metric: Metric; totals: YearTotals; comparison?: Comparison | null; sub?: Metric; inProgress?: boolean
-  hero?: boolean; spark?: Spark; className?: string
+  hero?: boolean; spark?: Spark; sparkTone?: 'income' | 'expense'; className?: string
 }) {
   const current = totals[metric.key]
   const previous = comparison?.totals?.[metric.key]
@@ -126,7 +131,7 @@ function Card({ metric, totals, comparison, sub, inProgress, hero, spark, classN
     <div className={`surface rise-in flex min-w-0 flex-col ${hero ? 'p-5 sm:p-6' : 'p-4 sm:p-5'} ${className}`}>
       <div className="flex items-center gap-2">
         <span className="label">{metric.label}</span>
-        <span className="cursor-help text-ink-4 hover:text-ink-2" title={metric.hint}><Icon name="info" size={12} /></span>
+        <span className="hint-tip cursor-help text-ink-4 hover:text-ink-2" data-tip={metric.hint}><Icon name="info" size={12} /></span>
         {hero && inProgress && (
           <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-ink-2"><span className="status-dot" />进行中</span>
         )}
@@ -137,12 +142,12 @@ function Card({ metric, totals, comparison, sub, inProgress, hero, spark, classN
           <div className="mt-2.5"><Delta metric={metric} current={current} previous={previous} comparison={comparison} /></div>
         )}
       </div>
-      {hero && spark && <SparkBars spark={spark} />}
+      {hero && spark && <SparkBars spark={spark} tone={sparkTone} />}
       {sub && (
         <div className="mt-4 flex flex-wrap items-start justify-between gap-2 border-t border-line pt-3">
           <div className="flex items-center gap-1.5">
             <span className="label">{sub.label}</span>
-            <span className="cursor-help text-ink-4 hover:text-ink-2" title={sub.hint}><Icon name="info" size={11} /></span>
+            <span className="hint-tip cursor-help text-ink-4 hover:text-ink-2" data-tip={sub.hint}><Icon name="info" size={11} /></span>
           </div>
           <div className="flex flex-col items-end gap-1">
             <Value metric={sub} value={totals[sub.key]} size="sm" />
@@ -157,18 +162,18 @@ function Card({ metric, totals, comparison, sub, inProgress, hero, spark, classN
 }
 
 /**
- * KPI 网格（参考 Industrial Hub 的 2fr 1fr 1fr）：
- * 第一行 营业额（跨两列）| 毛利率 | 总支出；第二行 总提现 | 订货支出+占比 | 工资支出+占比。
+ * KPI 网格：
+ * 第一行 营业额（hero 跨两列）| 总支出（hero 跨两列）；第二行 总提现+本月结余 | 订货支出+占比 | 工资支出+占比 | 毛利率。
  */
-export function KpiCards({ totals, comparison, inProgress, spark }: Props) {
+export function KpiCards({ totals, comparison, inProgress, spark, expenseSpark }: Props) {
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
       <Card metric={M.sales} totals={totals} comparison={comparison} inProgress={inProgress} hero spark={spark} className="col-span-2" />
-      <Card metric={M.grossMargin} totals={totals} comparison={comparison} />
-      <Card metric={M.totalExpense} totals={totals} comparison={comparison} />
-      <Card metric={M.withdraw} totals={totals} comparison={comparison} className="col-span-2 lg:col-span-1" />
+      <Card metric={M.totalExpense} totals={totals} comparison={comparison} hero spark={expenseSpark} sparkTone="expense" className="col-span-2" />
+      <Card metric={M.balance} sub={M.withdraw} totals={totals} comparison={comparison} className="col-span-2 lg:col-span-1" />
       <Card metric={M.orderExpense} sub={M.orderRatio} totals={totals} comparison={comparison} className="col-span-2 sm:col-span-1 lg:col-span-1" />
-      <Card metric={M.payroll} sub={M.payrollRatio} totals={totals} comparison={comparison} className="col-span-2 sm:col-span-1 lg:col-span-2" />
+      <Card metric={M.payroll} sub={M.payrollRatio} totals={totals} comparison={comparison} className="col-span-2 sm:col-span-1 lg:col-span-1" />
+      <Card metric={M.grossMargin} sub={M.netMargin} totals={totals} comparison={comparison} className="col-span-2 sm:col-span-1 lg:col-span-1" />
     </div>
   )
 }

@@ -4,7 +4,8 @@ import { ShaderBackground } from '../components/ShaderBackground'
 import { Button } from '../components/ui/Button'
 import { Field } from '../components/ui/Field'
 import { Icon } from '../components/ui/Icon'
-import { getCurrentUser, login } from '../lib/auth'
+import { changePassword, getCurrentUser, login } from '../lib/auth'
+import { Modal } from '../components/ui/Modal'
 
 /**
  * 登录页：
@@ -20,6 +21,13 @@ export function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [changeOpen, setChangeOpen] = useState(false)
+  const [changeUsername, setChangeUsername] = useState('')
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newPassword2, setNewPassword2] = useState('')
+  const [changeError, setChangeError] = useState('')
+  const [changing, setChanging] = useState(false)
 
   const [checking, setChecking] = useState(true)
   useEffect(() => {
@@ -52,6 +60,22 @@ export function Login() {
     }
   }
 
+  async function onChangePassword(e: FormEvent) {
+    e.preventDefault()
+    setChangeError('')
+    if (newPassword.length < 6) { setChangeError('新密码至少 6 位。'); return }
+    if (newPassword !== newPassword2) { setChangeError('两次输入的新密码不一致。'); return }
+    setChanging(true)
+    try {
+      await changePassword(changeUsername.trim(), oldPassword, newPassword)
+      setChangeOpen(false)
+      setChangeUsername(''); setOldPassword(''); setNewPassword(''); setNewPassword2('')
+      setError('密码已修改，请使用新密码登录。')
+    } catch (err) {
+      setChangeError(err instanceof Error ? err.message : '修改密码失败，请稍后重试。')
+    } finally { setChanging(false) }
+  }
+
   return (
     <div className="relative min-h-screen text-ink">
       {/* 氛围层铺满全页，登录页没有前景数据，用 vivid 档：颜色更足、指针视差更大 */}
@@ -59,7 +83,7 @@ export function Login() {
 
       {/* 四角技术标签（AURA） */}
       <div className="tech pointer-events-none absolute left-6 top-6 z-10 hidden sm:block lg:left-12 lg:top-10">SYS.CORE // ON-LINE</div>
-      <div className="tech pointer-events-none absolute right-6 top-6 z-10 hidden sm:block lg:right-12 lg:top-10">V03.0 · 门店财务运营看板</div>
+      <div className="tech pointer-events-none absolute right-6 top-6 z-10 hidden sm:block lg:right-12 lg:top-10">V05.0 · 门店财务运营看板</div>
       <div className="tech pointer-events-none absolute bottom-6 left-6 z-10 hidden sm:block lg:bottom-10 lg:left-12">UPLINK_ESTABLISHED_</div>
 
       <div className="relative z-10 mx-auto grid min-h-screen w-full max-w-[1440px] items-center px-4 py-16 lg:grid-cols-2 lg:gap-12 lg:px-12">
@@ -99,10 +123,29 @@ export function Login() {
             <Button type="submit" variant="primary" icon={submitting ? undefined : 'arrowRight'} className="btn-glow w-full !min-h-[50px] !rounded-full" loading={submitting} disabled={!username.trim() || !password}>
               {submitting ? '正在登录…' : '登录'}
             </Button>
-            <p className="text-center text-xs text-ink-3">管理员和观察者使用同一入口登录。忘记密码请联系管理员重置。</p>
+            <div className="flex items-center justify-between gap-3 text-xs text-ink-3">
+              <span>管理员和观察者使用同一入口登录。</span>
+              <Button variant="link" size="sm" className="text-xs" onClick={() => { setChangeError(''); setChangeOpen(true) }}>修改密码</Button>
+            </div>
           </form>
         </div>
       </div>
+      <Modal
+        open={changeOpen}
+        title="修改密码"
+        description="请输入账号、旧密码和新密码。修改成功后需要重新登录。"
+        onClose={() => setChangeOpen(false)}
+        size="sm"
+        footer={<><Button variant="secondary" onClick={() => setChangeOpen(false)}>取消</Button><Button variant="primary" type="submit" form="change-password" loading={changing}>保存新密码</Button></>}
+      >
+        <form id="change-password" onSubmit={onChangePassword} className="space-y-4" noValidate>
+          <Field label="账号" htmlFor="change-username"><input id="change-username" value={changeUsername} onChange={(e) => setChangeUsername(e.target.value)} className="control" autoComplete="username" required /></Field>
+          <Field label="旧密码" htmlFor="old-password"><input id="old-password" type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} className="control" autoComplete="current-password" required /></Field>
+          <Field label="新密码" htmlFor="change-new-password" hint="至少 6 位"><input id="change-new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="control" autoComplete="new-password" required /></Field>
+          <Field label="确认新密码" htmlFor="change-new-password-2"><input id="change-new-password-2" type="password" value={newPassword2} onChange={(e) => setNewPassword2(e.target.value)} className="control" autoComplete="new-password" required /></Field>
+          {changeError && <p role="alert" className="text-sm text-bad">{changeError}</p>}
+        </form>
+      </Modal>
     </div>
   )
 }

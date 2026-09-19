@@ -1,4 +1,4 @@
-/** 毛利率 = (营业额实收 - 总支出) / 营业额实收 */
+/** 毛利率 = (营业额实收 - 订货支出) / 营业额实收 */
 export function grossMargin(sales: number, expense: number): number {
   if (sales <= 0) return 0
   return (sales - expense) / sales

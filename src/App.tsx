@@ -17,6 +17,11 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return user.role === 'admin' ? <>{children}</> : <Navigate to="/" replace />
 }
 
+function CapabilityRoute({ capability, children }: { capability: 'canEditData' | 'canManageStores'; children: React.ReactNode }) {
+  const user = useCurrentUser()
+  return user.role === 'admin' || user[capability] ? <>{children}</> : <Navigate to="/" replace />
+}
+
 export default function App() {
   return (
     <ToastProvider>
@@ -36,8 +41,8 @@ export default function App() {
               >
                 <Route index element={<Dashboard />} />
                 <Route path="pk" element={<StorePK />} />
-                <Route path="data" element={<AdminRoute><DataEntry /></AdminRoute>} />
-                <Route path="stores" element={<AdminRoute><Stores /></AdminRoute>} />
+                <Route path="data" element={<CapabilityRoute capability="canEditData"><DataEntry /></CapabilityRoute>} />
+                <Route path="stores" element={<CapabilityRoute capability="canManageStores"><Stores /></CapabilityRoute>} />
                 <Route path="users" element={<AdminRoute><UserManagement /></AdminRoute>} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />

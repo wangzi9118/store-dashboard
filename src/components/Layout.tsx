@@ -77,7 +77,7 @@ export function Layout() {
   const user = useCurrentUser()
   const { status, lastSyncedAt, saveError, clearSaveError, refresh } = useData()
   const isAdmin = user.role === 'admin'
-  const links = isAdmin ? [...viewLinks, ...manageLinks] : viewLinks
+  const links = isAdmin ? [...viewLinks, ...manageLinks] : [...viewLinks, ...(user.canEditData ? [manageLinks[0]] : []), ...(user.canManageStores ? [manageLinks[1]] : [])]
   const current = links.find((link) => isActivePath(link, location.pathname))
 
   async function handleLogout() {

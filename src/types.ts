@@ -2,6 +2,8 @@ export interface Store {
   id: string
   name: string
   createdAt: string
+  /** 创建该门店的观察者 ID；管理员创建的门店为空 */
+  ownerUserId?: string
 }
 
 /** 收入/支出明细行 */
